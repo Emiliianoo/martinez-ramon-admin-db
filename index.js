@@ -95,31 +95,40 @@ app.get("/api/products", (req, res) => {
 });
 
 // Crear una nueva compra junto con sus detalles asociados
-app.post("/api/purchases", (req, res) => {
+const isPositiveInt = (v) => Number.isInteger(v) && v > 0;
+
+app.post("/api/purchases", async (req, res) => {
   const { user_id, status, details } = req.body;
 
-  if (
-    !user_id ||
-    !status ||
-    !details ||
-    !Array.isArray(details) ||
-    details.length === 0
-  ) {
+  // Validaciones básicas
+  if (!isPositiveInt(Number(user_id))) {
     return res
       .status(400)
-      .send("Faltan datos de la compra o detalles inválidos");
+      .send("user_id es requerido y debe ser entero positivo");
   }
-
-  // Mínimo debe haber un producto en la compra
-  if (details.length < 1) {
+  if (typeof status !== "string" || !status.trim()) {
+    return res.status(400).send("status es requerido");
+  }
+  if (!Array.isArray(details) || details.length < 1) {
     return res.status(400).send("Debe haber al menos un producto en la compra");
   }
-
-  // No se pueden guardar más de 5 productos por compra
   if (details.length > 5) {
     return res
       .status(400)
       .send("No se pueden comprar más de 5 productos por compra");
+  }
+
+  // Validación por item
+  for (const it of details) {
+    if (!isPositiveInt(Number(it?.product_id))) {
+      return res.status(400).send("product_id inválido");
+    }
+    if (!isPositiveInt(Number(it?.quantity))) {
+      return res.status(400).send("quantity debe ser entero > 0");
+    }
+    if (typeof it?.price !== "number" || !(it.price > 0)) {
+      return res.status(400).send("price debe ser número > 0");
+    }
   }
 
   // El total de la compra no puede pasar la cantidad de $3500
@@ -134,35 +143,75 @@ app.post("/api/purchases", (req, res) => {
       .send("El total de la compra no puede exceder los $3500");
   }
 
-  // Validar que haya stock disponible en cada producto
-  const checkStockPromises = details.map((item) => {
-    return pool.query("SELECT stock FROM products WHERE id = ?", [
-      item.product_id,
-    ]);
-  });
+  const conn = await pool.getConnection();
 
-  Promise.all(checkStockPromises)
-    .then((results) => {
-      for (let i = 0; i < results.length; i++) {
-        const [rows] = results[i];
-        if (rows.length === 0) {
-          return res
-            .status(400)
-            .send(`Producto con ID ${details[i].product_id} no encontrado`);
-        }
-        if (rows[0].stock < details[i].quantity) {
-          return res
-            .status(400)
-            .send(
-              `No hay suficiente stock para el producto con ID ${details[i].product_id}`
-            );
-        }
+  try {
+    await conn.beginTransaction();
+
+    // Validar que haya stock disponible en cada producto
+    for (const item of details) {
+      const [rows] = await conn.query(
+        "SELECT id, stock FROM products WHERE id = ? FOR UPDATE",
+        [item.product_id]
+      );
+      if (rows.length === 0) {
+        await conn.rollback();
+        return res
+          .status(400)
+          .send(`Producto con ID ${item.product_id} no encontrado`);
       }
-    })
-    .catch((error) => {
-      console.error(error);
-      res.status(500).send("Error al verificar el stock de los productos");
-    });
+      if (rows[0].stock < item.quantity) {
+        await conn.rollback();
+        return res
+          .status(400)
+          .send(
+            `No hay suficiente stock para el producto con ID ${item.product_id}`
+          );
+      }
+    }
+
+    // Insertar la compra
+    const [purchaseResult] = await conn.query(
+      "INSERT INTO purchases (user_id, total, status, purchase_date) VALUES (?, ?, ?, NOW())",
+      [user_id, totalAmount, status.trim()]
+    );
+    const purchaseId = purchaseResult.insertId;
+
+    // Insertar los detalles de la compra y actualizar stock
+    for (const item of details) {
+      const subtotal = item.price * item.quantity;
+
+      await conn.query(
+        "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
+        [purchaseId, item.product_id, item.quantity, item.price, subtotal]
+      );
+
+      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
+        item.quantity,
+        item.product_id,
+      ]);
+    }
+
+    await conn.commit();
+
+    return res
+      .status(201)
+      .json({
+        purchase_id: purchaseId,
+        user_id,
+        total: totalAmount,
+        status,
+        details,
+      });
+  } catch (error) {
+    console.error(error);
+    try {
+      await conn.rollback();
+    } catch (_) {}
+    return res.status(500).send("Error al procesar la compra");
+  } finally {
+    conn.release();
+  }
 });
 
 app.listen(port, hostname, () => {
