@@ -194,15 +194,13 @@ app.post("/api/purchases", async (req, res) => {
 
     await conn.commit();
 
-    return res
-      .status(201)
-      .json({
-        purchase_id: purchaseId,
-        user_id,
-        total: totalAmount,
-        status,
-        details,
-      });
+    return res.status(201).json({
+      purchase_id: purchaseId,
+      user_id,
+      total: totalAmount,
+      status,
+      details,
+    });
   } catch (error) {
     console.error(error);
     try {
