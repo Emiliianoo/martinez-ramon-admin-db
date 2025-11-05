@@ -94,6 +94,50 @@ app.get("/api/products", (req, res) => {
     });
 });
 
+// Crear una nueva compra junto con sus detalles asociados
+app.post("/api/purchases", (req, res) => {
+  const { user_id, status, details } = req.body;
+
+  if (
+    !user_id ||
+    !status ||
+    !details ||
+    !Array.isArray(details) ||
+    details.length === 0
+  ) {
+    return res
+      .status(400)
+      .send("Faltan datos de la compra o detalles inválidos");
+  }
+
+  // Mínimo debe haber un producto en la compra
+
+  // No se pueden guardar más de 5 productos por compra
+  if (details.length > 5) {
+    return res
+      .status(400)
+      .send("No se pueden comprar más de 5 productos por compra");
+  }
+
+  // Validar que haya stock disponible en cada producto
+  const checkStockPromises = details.map((item) =>
+    pool.query("SELECT stock FROM products WHERE id = ?", [item.product_id])
+  );
+
+  Promise.all(checkStockPromises).then((results) => {
+    for (let i = 0; i < results.length; i++) {
+      const [rows] = results[i];
+      if (rows.length === 0 || rows[0].stock < details[i].quantity) {
+        return res
+          .status(400)
+          .send(
+            `No hay stock suficiente para el producto con ID ${details[i].product_id}`
+          );
+      }
+    }
+  });
+});
+
 app.listen(port, hostname, () => {
   console.log(`Server running at http://${hostname}:${port}/api/products`);
 });
