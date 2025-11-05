@@ -111,6 +111,9 @@ app.post("/api/purchases", (req, res) => {
   }
 
   // Mínimo debe haber un producto en la compra
+  if (details.length < 1) {
+    return res.status(400).send("Debe haber al menos un producto en la compra");
+  }
 
   // No se pueden guardar más de 5 productos por compra
   if (details.length > 5) {
@@ -119,23 +122,47 @@ app.post("/api/purchases", (req, res) => {
       .send("No se pueden comprar más de 5 productos por compra");
   }
 
-  // Validar que haya stock disponible en cada producto
-  const checkStockPromises = details.map((item) =>
-    pool.query("SELECT stock FROM products WHERE id = ?", [item.product_id])
+  // El total de la compra no puede pasar la cantidad de $3500
+  const totalAmount = details.reduce(
+    (total, item) => total + item.price * item.quantity,
+    0
   );
 
-  Promise.all(checkStockPromises).then((results) => {
-    for (let i = 0; i < results.length; i++) {
-      const [rows] = results[i];
-      if (rows.length === 0 || rows[0].stock < details[i].quantity) {
-        return res
-          .status(400)
-          .send(
-            `No hay stock suficiente para el producto con ID ${details[i].product_id}`
-          );
-      }
-    }
+  if (totalAmount > 3500) {
+    return res
+      .status(400)
+      .send("El total de la compra no puede exceder los $3500");
+  }
+
+  // Validar que haya stock disponible en cada producto
+  const checkStockPromises = details.map((item) => {
+    return pool.query("SELECT stock FROM products WHERE id = ?", [
+      item.product_id,
+    ]);
   });
+
+  Promise.all(checkStockPromises)
+    .then((results) => {
+      for (let i = 0; i < results.length; i++) {
+        const [rows] = results[i];
+        if (rows.length === 0) {
+          return res
+            .status(400)
+            .send(`Producto con ID ${details[i].product_id} no encontrado`);
+        }
+        if (rows[0].stock < details[i].quantity) {
+          return res
+            .status(400)
+            .send(
+              `No hay suficiente stock para el producto con ID ${details[i].product_id}`
+            );
+        }
+      }
+    })
+    .catch((error) => {
+      console.error(error);
+      res.status(500).send("Error al verificar el stock de los productos");
+    });
 });
 
 app.listen(port, hostname, () => {
