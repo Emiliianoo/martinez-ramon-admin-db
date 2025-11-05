@@ -212,6 +212,67 @@ app.post("/api/purchases", async (req, res) => {
   }
 });
 
+// Actualizar una compra existente y sus detalles
+app.put("/api/purchases/:id", async (req, res) => {
+  if (!isPositiveInt(Number(req.params.id))) {
+    return res.status(400).send("ID de compra inválido");
+  }
+
+  const { user_id, status, details } = req.body;
+
+  // Validaciones básicas
+  if (!isPositiveInt(Number(user_id))) {
+    return res
+      .status(400)
+      .send("user_id es requerido y debe ser entero positivo");
+  }
+  if (typeof status !== "string" || !status.trim()) {
+    return res.status(400).send("status es requerido");
+  }
+  if (!Array.isArray(details) || details.length < 1) {
+    return res.status(400).send("Debe haber al menos un producto en la compra");
+  }
+  if (details.length > 5) {
+    return res
+      .status(400)
+      .send("No se pueden comprar más de 5 productos por compra");
+  }
+  // Status no puede ser 'completed'
+  if (status.trim().toLowerCase() === "completed") {
+    return res
+      .status(400)
+      .send("No se puede actualizar una compra a 'completed'");
+  }
+
+  // Validación por item
+  for (const it of details) {
+    if (!isPositiveInt(Number(it?.product_id))) {
+      return res.status(400).send("product_id inválido");
+    }
+    if (!isPositiveInt(Number(it?.quantity))) {
+      return res.status(400).send("quantity debe ser entero > 0");
+    }
+    if (typeof it?.price !== "number" || !(it.price > 0)) {
+      return res.status(400).send("price debe ser número > 0");
+    }
+  }
+
+  // El total de la compra no puede pasar la cantidad de $3500
+  const totalAmount = details.reduce(
+    (total, item) => total + item.price * item.quantity,
+    0
+  );
+
+  // redondear a dos decimales
+  const roundedTotal = Math.round((totalAmount + Number.EPSILON) * 100) / 100;
+
+  if (roundedTotal > 3500) {
+    return res
+      .status(400)
+      .send("El total de la compra no puede exceder los $3500");
+  }
+});
+
 app.listen(port, hostname, () => {
   console.log(`Server running at http://${hostname}:${port}/api/products`);
 });
