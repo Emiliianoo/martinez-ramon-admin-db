@@ -541,6 +541,50 @@ app.get("/api/purchases", (req, res) => {
     });
 });
 
+// Obtener una compra específica con sus detalles
+app.get("/api/purchases/:id", (req, res) => {
+  const { id } = req.params;
+  const sql = `SELECT p.*, pd.id AS detail_id, pd.product_id, pd.quantity, pd.price, pd.subtotal
+               FROM purchases p
+               LEFT JOIN purchase_details pd ON p.id = pd.purchase_id
+               WHERE p.id = ?`;
+
+  pool
+    .query(sql, [id])
+    .then(([rows]) => {
+      if (rows.length === 0) {
+        return res.status(404).send("Compra no encontrada");
+      }
+
+      const purchase = {
+        id: rows[0].id,
+        user_id: rows[0].user_id,
+        total: rows[0].total,
+        status: rows[0].status,
+        purchase_date: rows[0].purchase_date,
+        details: [],
+      };
+
+      for (const row of rows) {
+        if (row.product_id) {
+          purchase.details.push({
+            id: row.detail_id,
+            product_id: row.product_id,
+            quantity: row.quantity,
+            price: row.price,
+            subtotal: row.subtotal,
+          });
+        }
+      }
+
+      res.status(200).json(purchase);
+    })
+    .catch((error) => {
+      console.error(error);
+      res.status(500).send("Error al consultar la compra");
+    });
+});
+
 app.listen(port, hostname, () => {
   console.log(`Server running at http://${hostname}:${port}/api/products`);
 });
