@@ -271,6 +271,78 @@ app.put("/api/purchases/:id", async (req, res) => {
       .status(400)
       .send("El total de la compra no puede exceder los $3500");
   }
+
+  const conn = await pool.getConnection();
+
+  try {
+    await conn.beginTransaction();
+
+    // Verificar si la compra existe
+    const [purchaseRows] = await conn.query(
+      "SELECT * FROM purchases WHERE id = ? FOR UPDATE",
+      [req.params.id]
+    );
+    if (purchaseRows.length === 0) {
+      // Crear la compra si no existe
+
+      // Verificar stock de cada producto
+      for (const item of details) {
+        const [rows] = await conn.query(
+          "SELECT id, stock FROM products WHERE id = ? FOR UPDATE",
+          [item.product_id]
+        );
+        if (rows.length == 0) {
+          await conn.rollback();
+          return res
+            .status(400)
+            .send(`Producto con ID ${item.product_id} no encontrado`);
+        }
+        if (rows[0].stock < item.quantity) {
+          await conn.rollback();
+          return res
+            .status(400)
+            .send(
+              `No hay suficiente stock para el producto con ID ${item.product_id}`
+            );
+        }
+      }
+
+      // Insertar la compra
+      await conn.query(
+        "INSERT INTO purchases (id, user_id, total, status, purchase_date) VALUES (?, ?, ?, ?, NOW())",
+        [req.params.id, user_id, roundedTotal, status.trim()]
+      );
+
+      // Insertar los detalles de la compra y actualizar stock
+      for (const item of details) {
+        const subtotal = item.price * item.quantity;
+
+        await conn.query(
+          "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
+          [req.params.id, item.product_id, item.quantity, item.price, subtotal]
+        );
+
+        await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
+          item.quantity,
+          item.product_id,
+        ]);
+      }
+
+      await conn.commit();
+
+      return res.status(201).json({
+        purchase_id: Number(req.params.id),
+        user_id,
+        total: roundedTotal,
+        status,
+        details,
+      });
+    }
+  } catch (error) {
+    console.error(error);
+  } finally {
+    conn.release();
+  }
 });
 
 app.listen(port, hostname, () => {
