@@ -430,6 +430,73 @@ app.put("/api/purchases/:id", async (req, res) => {
   }
 });
 
+// Eliminar una compra y restaurar el stock de los productos asociados
+app.delete("/api/purchases/:id", async (req, res) => {
+  const purchaseId = Number(req.params.id);
+  if (!isPositiveInt(purchaseId)) {
+    return res.status(400).send("ID de compra inválido");
+  }
+
+  const conn = await pool.getConnection();
+
+  try {
+    await conn.beginTransaction();
+    // Verificar si la compra existe
+    const [purchaseRows] = await conn.query(
+      "SELECT * FROM purchases WHERE id = ? FOR UPDATE",
+      [purchaseId]
+    );
+    if (purchaseRows.length === 0) {
+      await conn.rollback();
+      return res.status(404).send("Compra no encontrada");
+    }
+
+    // Si la compra está 'completed', no se puede eliminar
+    if (
+      typeof purchaseRows[0].status == "string" &&
+      purchaseRows[0].status.toUpperCase() === "COMPLETED"
+    ) {
+      await conn.rollback();
+      return res
+        .status(400)
+        .send("No se puede eliminar una compra 'completed'");
+    }
+
+    // Obtener los detalles de la compra
+    const [details] = await conn.query(
+      "SELECT * FROM purchase_details WHERE purchase_id = ?",
+      [purchaseId]
+    );
+
+    // Restaurar el stock de los productos asociados
+    for (const item of details) {
+      await conn.query("UPDATE products SET stock = stock + ? WHERE id = ?", [
+        item.quantity,
+        item.product_id,
+      ]);
+    }
+
+    // Eliminar los detalles de la compra
+    await conn.query("DELETE FROM purchase_details WHERE purchase_id = ?", [
+      purchaseId,
+    ]);
+
+    // Eliminar la compra
+    await conn.query("DELETE FROM purchases WHERE id = ?", [purchaseId]);
+    await conn.commit();
+
+    return res.status(200).send("Compra eliminada exitosamente");
+  } catch (error) {
+    console.error(error);
+    try {
+      await conn.rollback();
+    } catch (_) {}
+    return res.status(500).send("Error al eliminar la compra");
+  } finally {
+    conn.release();
+  }
+});
+
 app.listen(port, hostname, () => {
   console.log(`Server running at http://${hostname}:${port}/api/products`);
 });
