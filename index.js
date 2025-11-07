@@ -497,6 +497,50 @@ app.delete("/api/purchases/:id", async (req, res) => {
   }
 });
 
+// Obtener todas las compras con sus detalles
+app.get("/api/purchases", (req, res) => {
+  const sql = `SELECT p.*, pd.id AS detail_id, pd.product_id, pd.quantity, pd.price, pd.subtotal
+               FROM purchases p
+               LEFT JOIN purchase_details pd ON p.id = pd.purchase_id
+               ORDER BY p.id`;
+
+  pool
+    .query(sql)
+    .then(([rows]) => {
+      const purchasesMap = new Map();
+
+      for (const row of rows) {
+        if (!purchasesMap.has(row.id)) {
+          purchasesMap.set(row.id, {
+            id: row.id,
+            user_id: row.user_id,
+            total: row.total,
+            status: row.status,
+            purchase_date: row.purchase_date,
+            details: [],
+          });
+        }
+
+        if (row.product_id) {
+          purchasesMap.get(row.id).details.push({
+            id: row.detail_id,
+            product_id: row.product_id,
+            quantity: row.quantity,
+            price: row.price,
+            subtotal: row.subtotal,
+          });
+        }
+      }
+
+      const purchases = Array.from(purchasesMap.values());
+      res.status(200).json(purchases);
+    })
+    .catch((error) => {
+      console.error(error);
+      res.status(500).send("Error al consultar las compras");
+    });
+});
+
 app.listen(port, hostname, () => {
   console.log(`Server running at http://${hostname}:${port}/api/products`);
 });
