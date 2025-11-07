@@ -403,23 +403,22 @@ app.put("/api/purchases/:id", async (req, res) => {
         item.quantity,
         item.product_id,
       ]);
-
-      // Actualizar la compra
-      await conn.query(
-        "UPDATE purchases SET user_id = ?, total = ?, status = ? WHERE id = ?",
-        [user_id, roundedTotal, status.trim(), purchaseId]
-      );
-
-      await conn.commit();
-
-      return res.status(200).json({
-        purchase_id: purchaseId,
-        user_id,
-        total: roundedTotal,
-        status,
-        details,
-      });
     }
+    // Actualizar la compra
+    await conn.query(
+      "UPDATE purchases SET user_id = ?, total = ?, status = ? WHERE id = ?",
+      [user_id, roundedTotal, status.trim(), purchaseId]
+    );
+    await conn.commit();
+
+    return res.status(200).json({
+      message: "Compra actualizada exitosamente",
+      purchase_id: purchaseId,
+      user_id,
+      total: roundedTotal,
+      status,
+      details,
+    });
   } catch (error) {
     console.error(error);
     try {
