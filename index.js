@@ -214,7 +214,8 @@ app.post("/api/purchases", async (req, res) => {
 
 // Actualizar una compra existente y sus detalles
 app.put("/api/purchases/:id", async (req, res) => {
-  if (!isPositiveInt(Number(req.params.id))) {
+  const purchaseId = Number(req.params.id);
+  if (!isPositiveInt(purchaseId)) {
     return res.status(400).send("ID de compra inválido");
   }
 
@@ -280,7 +281,7 @@ app.put("/api/purchases/:id", async (req, res) => {
     // Verificar si la compra existe
     const [purchaseRows] = await conn.query(
       "SELECT * FROM purchases WHERE id = ? FOR UPDATE",
-      [req.params.id]
+      [purchaseId]
     );
     if (purchaseRows.length === 0) {
       // Crear la compra si no existe
@@ -310,7 +311,7 @@ app.put("/api/purchases/:id", async (req, res) => {
       // Insertar la compra
       await conn.query(
         "INSERT INTO purchases (id, user_id, total, status, purchase_date) VALUES (?, ?, ?, ?, NOW())",
-        [req.params.id, user_id, roundedTotal, status.trim()]
+        [purchaseId, user_id, roundedTotal, status.trim()]
       );
 
       // Insertar los detalles de la compra y actualizar stock
@@ -319,7 +320,7 @@ app.put("/api/purchases/:id", async (req, res) => {
 
         await conn.query(
           "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
-          [req.params.id, item.product_id, item.quantity, item.price, subtotal]
+          [purchaseId, item.product_id, item.quantity, item.price, subtotal]
         );
 
         await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
@@ -331,7 +332,88 @@ app.put("/api/purchases/:id", async (req, res) => {
       await conn.commit();
 
       return res.status(201).json({
-        purchase_id: Number(req.params.id),
+        messsage: "Compra creada ya que no existía",
+        purchase_id: purchaseId,
+        user_id,
+        total: roundedTotal,
+        status,
+        details,
+      });
+    }
+
+    // Si la compra existe verificar que no esté 'completed'
+    if (
+      typeof purchaseRows[0].status == "string" &&
+      purchaseRows[0].status.toUpperCase() === "COMPLETED"
+    ) {
+      await conn.rollback();
+      return res
+        .status(400)
+        .send("No se puede modificar una compra 'completed'");
+    }
+
+    // UPDATE de la compra existente
+    const [oldDetails] = await conn.query(
+      "SELECT * FROM purchase_details WHERE purchase_id = ?",
+      [purchaseId]
+    );
+
+    // Restaurar stock de los productos en los detalles antiguos
+    for (const oldItem of oldDetails) {
+      await conn.query("UPDATE products SET stock = stock + ? WHERE id = ?", [
+        oldItem.quantity,
+        oldItem.product_id,
+      ]);
+    }
+
+    // Borrar los detalles actuales
+    await conn.query("DELETE FROM purchase_details WHERE purchase_id = ?", [
+      purchaseId,
+    ]);
+
+    // Verificar stock de cada producto en los nuevos detalles
+    for (const item of details) {
+      const [rows] = await conn.query(
+        "SELECT id, stock FROM products WHERE id = ? FOR UPDATE",
+        [item.product_id]
+      );
+      if (rows.length == 0) {
+        await conn.rollback();
+        return res
+          .status(400)
+          .send(`Producto con ID ${item.product_id} no encontrado`);
+      }
+      if (rows[0].stock < item.quantity) {
+        await conn.rollback();
+        return res
+          .status(400)
+          .send(
+            `No hay suficiente stock para el producto con ID ${item.product_id}`
+          );
+      }
+
+      const subtotal = item.price * item.quantity;
+
+      await conn.query(
+        "INSERT INTO purchase_details (purchase_id, product_id, quantity, price, subtotal) VALUES (?, ?, ?, ?, ?)",
+        [purchaseId, item.product_id, item.quantity, item.price, subtotal]
+      );
+
+      await conn.query("UPDATE products SET stock = stock - ? WHERE id = ?", [
+        item.quantity,
+        item.product_id,
+      ]);
+
+      // Actualizar la compra
+      await conn.query(
+        "UPDATE purchases SET user_id = ?, total = ?, status = ? WHERE id = ?",
+        [user_id, roundedTotal, status.trim(), purchaseId]
+      );
+
+      await conn.commit();
+
+      return res.status(200).json({
+        purchase_id: purchaseId,
         user_id,
         total: roundedTotal,
         status,
@@ -340,6 +422,10 @@ app.put("/api/purchases/:id", async (req, res) => {
     }
   } catch (error) {
     console.error(error);
+    try {
+      await conn.rollback();
+    } catch (_) {}
+    return res.status(500).send("Error al procesar la actualización de compra");
   } finally {
     conn.release();
   }
