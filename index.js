@@ -499,10 +499,22 @@ app.delete("/api/purchases/:id", async (req, res) => {
 
 // Obtener todas las compras con sus detalles
 app.get("/api/purchases", (req, res) => {
-  const sql = `SELECT p.*, pd.id AS detail_id, pd.product_id, pd.quantity, pd.price, pd.subtotal
-               FROM purchases p
-               LEFT JOIN purchase_details pd ON p.id = pd.purchase_id
-               ORDER BY p.id`;
+  const sql = `SELECT
+      p.id,
+      p.total,
+      p.status,
+      p.purchase_date,
+      u.name AS user,
+      pd.id AS detail_id,
+      pd.quantity,
+      pd.price,
+      pd.subtotal,
+      pr.name AS product
+    FROM purchases p
+    LEFT JOIN users u ON u.id = p.user_id
+    LEFT JOIN purchase_details pd ON pd.purchase_id = p.id
+    LEFT JOIN products pr ON pr.id = pd.product_id
+    ORDER BY p.id, pd.id`;
 
   pool
     .query(sql)
@@ -513,7 +525,7 @@ app.get("/api/purchases", (req, res) => {
         if (!purchasesMap.has(row.id)) {
           purchasesMap.set(row.id, {
             id: row.id,
-            user_id: row.user_id,
+            user: row.user,
             total: row.total,
             status: row.status,
             purchase_date: row.purchase_date,
@@ -521,10 +533,10 @@ app.get("/api/purchases", (req, res) => {
           });
         }
 
-        if (row.product_id) {
+        if (row.detail_id) {
           purchasesMap.get(row.id).details.push({
             id: row.detail_id,
-            product_id: row.product_id,
+            product: row.product,
             quantity: row.quantity,
             price: row.price,
             subtotal: row.subtotal,
@@ -544,10 +556,16 @@ app.get("/api/purchases", (req, res) => {
 // Obtener una compra específica con sus detalles
 app.get("/api/purchases/:id", (req, res) => {
   const { id } = req.params;
-  const sql = `SELECT p.*, pd.id AS detail_id, pd.product_id, pd.quantity, pd.price, pd.subtotal
-               FROM purchases p
-               LEFT JOIN purchase_details pd ON p.id = pd.purchase_id
-               WHERE p.id = ?`;
+  const sql = `SELECT 
+      p.id, p.total, p.status, p.purchase_date,
+      u.name AS user,
+      pd.id AS detail_id, pd.quantity, pd.price, pd.subtotal,
+      pr.name AS product
+    FROM purchases p
+    LEFT JOIN users u ON p.user_id = u.id
+    LEFT JOIN purchase_details pd ON p.id = pd.purchase_id
+    LEFT JOIN products pr ON pd.product_id = pr.id
+    WHERE p.id = ?`;
 
   pool
     .query(sql, [id])
@@ -558,7 +576,7 @@ app.get("/api/purchases/:id", (req, res) => {
 
       const purchase = {
         id: rows[0].id,
-        user_id: rows[0].user_id,
+        user: rows[0].user,
         total: rows[0].total,
         status: rows[0].status,
         purchase_date: rows[0].purchase_date,
@@ -566,10 +584,10 @@ app.get("/api/purchases/:id", (req, res) => {
       };
 
       for (const row of rows) {
-        if (row.product_id) {
+        if (row.detail_id) {
           purchase.details.push({
             id: row.detail_id,
-            product_id: row.product_id,
+            product: row.product,
             quantity: row.quantity,
             price: row.price,
             subtotal: row.subtotal,
